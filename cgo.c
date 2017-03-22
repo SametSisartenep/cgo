@@ -1,6 +1,9 @@
+/*	$Antares: cgo.c,v 0.5 2017/03/22 01:54 sam Exp $	*/
+
 /*
  * cgo - a simple terminal based gopher client
  * Copyright (c) 2014 Sebastian Steinhauer <s.steinhauer@yahoo.de>
+ * Copyright (c) 2017 Rodrigo González López <rodrigosloop@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -18,45 +21,49 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
+#include <ctype.h>
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
+
+#define VERSION 	"0.5"
+#define AUTHOR		"Sebastian Steinhauer and contributors"
 
 /* some "configuration" */
 #define START_URI           "gopher://gopher.floodgap.com:70"
 #define CMD_TEXT            "less"
-#define CMD_IMAGE           "display"
+#define CMD_IMAGE           "sxiv"
 #define CMD_BROWSER         "firefox"
-#define CMD_PLAYER          "mplayer"
+#define CMD_PLAYER          "mpv"
 #define CMD_TELNET          "telnet"
-#define COLOR_PROMPT        "1;34"
-#define COLOR_SELECTOR      "1;32"
+#define COLOR_PROMPT        "1;30"
+#define COLOR_SELECTOR      "4;30"
 #define HEAD_CHECK_LEN      5
 #define GLOBAL_CONFIG_FILE  "/etc/cgorc"
 #define LOCAL_CONFIG_FILE   "/.cgorc"
 #define NUM_BOOKMARKS       20
 
 /* some internal defines */
-#define KEY_RANGE   	(('z' - 'a') + 1)
+#define KEY_RANGE	(('z' - 'a') + 1)
 
 /* structs */
-typedef struct link_s link_t;
-struct link_s {
-	link_t  *next;
+typedef struct Link Link;
+struct Link {
+	Link   *next;
 	char    which;
 	short   key;
-	char    *host;
-	char    *port;
-	char    *selector;
+	char   *host;
+	char   *port;
+	char   *selector;
 };
 
-typedef struct config_s config_t;
-struct config_s {
+typedef struct Config Config;
+struct Config {
 	char    start_uri[512];
 	char    cmd_text[512];
 	char    cmd_image[512];
@@ -66,32 +73,75 @@ struct config_s {
 	char    color_selector[512];
 };
 
-char        tmpfilename[256];
-link_t      *links = NULL;
-link_t      *history = NULL;
-int         link_key;
-char        current_host[512], current_port[64], current_selector[1024];
-char        parsed_host[512], parsed_port[64], parsed_selector[1024];
-char        bookmarks[NUM_BOOKMARKS][512];
-config_t    config;
+char      tmpfilename[256];
+Link     *links = NULL;
+Link     *history = NULL;
+int       link_key;
+char      current_host[512], current_port[64], current_selector[1024];
+char      parsed_host[512], parsed_port[64], parsed_selector[1024];
+char      bookmarks[NUM_BOOKMARKS][512];
+Config    config;
 
 /* function prototypes */
-int parse_uri(const char *uri);
+static int parse_uri(const char *);
+static void die(const char *, ...);
+static void usage(void);
+static void banner(FILE *);
+static void parse_config_line(const char *);
+static void load_config(const char *);
+static void init_config(void);
+static int dial(const char *, const char *, const char *);
+static int read_line(int, char *, size_t);
+static int download_file(const char *, const char *, const char *, int);
+static int download_temp(const char *, const char *, const char *);
+static int make_key(char, char);
+static void make_key_str(int, char *, char *);
+static void add_link(char, const char *, const char *, const char *,
+			const char *);
+static void clear_links(void);
+static void add_history(void);
+static void handle_directory_line(char *);
+static int is_valid_directory_entry(const char *);
+static void view_directory(const char *, const char *, const char *, int);
+static void view_file(const char *, const char *, const char *,
+			const char *);
+static void view_telnet(const char *, const char *);
+static void view_download(const char *, const char *, const char *);
+static void view_search(const char *, const char *, const char *);
+static void view_history(int);
+static void view_bookmarks(int);
+static void pop_history(void);
+static int follow_link(int);
+static void download_link(int);
+static int parse_uri(const char *);
 
 /* implementation */
-void usage()
+static void
+die(const char *errstr, ...)
 {
-	fputs("usage: cgo [-v] [-H] [gopher URI]\n",
-	      stderr);
-	exit(EXIT_SUCCESS);
+	va_list ap;
+
+	va_start(ap, errstr);
+	vfprintf(stderr, errstr, ap);
+	va_end(ap);
+
+	exit(EXIT_FAILURE);
 }
 
-void banner(FILE *f)
+static void
+usage(void)
 {
-	fputs("cgo 0.4.1  Copyright (c) 2014  Sebastian Steinhauer\n", f);
+	die("usage: cgo [-hv] [uri]\n");
 }
 
-void parse_config_line(const char *line)
+static void
+banner(FILE *f)
+{
+	fprintf(f, "cgo %s Copyright (c) 2014, 2017 %s\n", VERSION, AUTHOR);
+}
+
+static void
+parse_config_line(const char *line)
 {
 	char    token[1024];
 	char    bkey[128];
@@ -130,7 +180,8 @@ void parse_config_line(const char *line)
 
 }
 
-void load_config(const char *filename)
+static void
+load_config(const char *filename)
 {
 	FILE    *fp;
 	int     ch, i;
@@ -170,7 +221,8 @@ void load_config(const char *filename)
 	}
 }
 
-void init_config()
+static void
+init_config(void)
 {
 	char        filename[1024];
 	const char  *home;
@@ -197,21 +249,25 @@ void init_config()
 	}
 }
 
-int dial(const char *host, const char *port, const char *selector)
+static int
+dial(const char *host, const char *port, const char *selector)
 {
 	struct addrinfo hints;
 	struct addrinfo *res, *r;
-	int             srv = -1, l;
+	int             srv = -1, s, l;
 	char            request[512];
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
-	if (getaddrinfo(host, port, &hints, &res) != 0) {
+
+	s = getaddrinfo(host, port, &hints, &res);
+	if (s != 0) {
 		fprintf(stderr, "error: cannot resolve hostname '%s:%s': %s\n",
-		        host, port, strerror(errno));
+		        host, port, gai_strerror(s));
 		return -1;
 	}
+
 	for (r = res; r; r = r->ai_next) {
 		srv = socket(r->ai_family, r->ai_socktype, r->ai_protocol);
 		if (srv == -1)
@@ -220,23 +276,29 @@ int dial(const char *host, const char *port, const char *selector)
 			break;
 		close(srv);
 	}
+
 	freeaddrinfo(res);
-	if (! r) {
+
+	if (!r) {
 		fprintf(stderr, "error: cannot connect to host '%s:%s'\n",
 		        host, port);
 		return -1;
 	}
+
 	snprintf(request, sizeof(request), "%s\r\n", selector);
+
 	l = strlen(request);
 	if (write(srv, request, l) != l) {
 		fprintf(stderr, "error: cannot complete request\n");
 		close(srv);
 		return -1;
 	}
+
 	return srv;
 }
 
-int read_line(int fd, char *buf, size_t buf_len)
+static int
+read_line(int fd, char *buf, size_t buf_len)
 {
 	size_t  i = 0;
 	char    c = 0;
@@ -251,7 +313,8 @@ int read_line(int fd, char *buf, size_t buf_len)
 	return 1;
 }
 
-int download_file(const char *host, const char *port,
+static int
+download_file(const char *host, const char *port,
                   const char *selector, int fd)
 {
 	int             srvfd, len;
@@ -266,7 +329,11 @@ int download_file(const char *host, const char *port,
 		return 0;
 	}
 	while ((len = read(srvfd, buffer, sizeof(buffer))) > 0) {
-		write(fd, buffer, len);
+		if(write(fd, buffer, len) < 1) {
+			printf("\033[2Kerror: downloading [%s] failed\n", selector);
+			close(fd);
+			return 0;
+		}
 		total += len;
 		printf("downloading [%s] (%ld kb)...\r", selector, total / 1024);
 	}
@@ -276,7 +343,8 @@ int download_file(const char *host, const char *port,
 	return 1;
 }
 
-int download_temp(const char *host, const char *port, const char *selector)
+static int
+download_temp(const char *host, const char *port, const char *selector)
 {
 	int     tmpfd;
 
@@ -290,35 +358,38 @@ int download_temp(const char *host, const char *port, const char *selector)
 		fputs("error: unable to create tmp file\n", stderr);
 		return 0;
 	}
-	if (! download_file(host, port, selector, tmpfd)) {
+	if (!download_file(host, port, selector, tmpfd)) {
 		unlink(tmpfilename);
 		return 0;
 	}
 	return 1;
 }
 
-int make_key(char c1, char c2)
+static int
+make_key(char c1, char c2)
 {
 	if (! c1 || ! c2)
 		return -1;
 	return ((c1 - 'a') * KEY_RANGE) + (c2 - 'a');
 }
 
-void make_key_str(int key, char *c1, char *c2)
+static void
+make_key_str(int key, char *c1, char *c2)
 {
 	*c1 = 'a' + (key / KEY_RANGE);
 	*c2 = 'a' + (key % KEY_RANGE);
 }
 
-void add_link(char which, const char *name,
+static void
+add_link(char which, const char *name,
               const char *host, const char *port, const char *selector)
 {
-	link_t  *link;
+	Link  *link;
 	char    a = 0, b = 0;
 
 	if (! host || ! port || ! selector)
 		return; /* ignore incomplete selectors */
-	link = calloc(1, sizeof(link_t));
+	link = calloc(1, sizeof(Link));
 	link->which = which;
 	link->key = link_key;
 	link->host = strdup(host);
@@ -335,9 +406,10 @@ void add_link(char which, const char *name,
 	       config.color_selector, a, b, name);
 }
 
-void clear_links()
+static void
+clear_links(void)
 {
-	link_t  *link, *next;
+	Link  *link, *next;
 
 	for (link = links; link; ) {
 		next = link->next;
@@ -351,11 +423,12 @@ void clear_links()
 	link_key = 0;
 }
 
-void add_history()
+static void
+add_history(void)
 {
-	link_t  *link;
+	Link  *link;
 
-	link = calloc(1, sizeof(link_t));
+	link = calloc(1, sizeof(Link));
 	link->host = strdup(current_host);
 	link->port = strdup(current_port);
 	link->selector = strdup(current_selector);
@@ -368,7 +441,8 @@ void add_history()
 	history = link;
 }
 
-void handle_directory_line(char *line)
+static void
+handle_directory_line(char *line)
 {
 	int     i;
 	char    *lp, *last, *fields[4];
@@ -415,7 +489,8 @@ void handle_directory_line(char *line)
 	}
 }
 
-int is_valid_directory_entry(const char *line)
+static int
+is_valid_directory_entry(const char *line)
 {
 	switch (line[0]) {
 	case 'i':
@@ -438,7 +513,8 @@ int is_valid_directory_entry(const char *line)
 	}
 }
 
-void view_directory(const char *host, const char *port,
+static void
+view_directory(const char *host, const char *port,
                     const char *selector, int make_current)
 {
 	int     is_dir;
@@ -488,7 +564,8 @@ void view_directory(const char *host, const char *port,
 	close(srvfd);
 }
 
-void view_file(const char *cmd, const char *host,
+static void
+view_file(const char *cmd, const char *host,
                const char *port, const char *selector)
 {
 	pid_t   pid;
@@ -526,7 +603,8 @@ void view_file(const char *cmd, const char *host,
 	unlink(tmpfilename);
 }
 
-void view_telnet(const char *host, const char *port)
+static void
+view_telnet(const char *host, const char *port)
 {
 	pid_t   pid;
 	int     status;
@@ -541,7 +619,8 @@ void view_telnet(const char *host, const char *port)
 	puts("(done)");
 }
 
-void view_download(const char *host, const char *port,
+static void
+view_download(const char *host, const char *port,
                    const char *selector)
 {
 	int     fd;
@@ -573,7 +652,8 @@ void view_download(const char *host, const char *port,
 	}
 }
 
-void view_search(const char *host, const char *port, const char *selector)
+static void
+view_search(const char *host, const char *port, const char *selector)
 {
 	char    search_selector[1024];
 	char    line[1024];
@@ -589,11 +669,12 @@ void view_search(const char *host, const char *port, const char *selector)
 	view_directory(host, port, search_selector, 1);
 }
 
-void view_history(int key)
+static void
+view_history(int key)
 {
 	int     history_key = 0;
 	char    a, b;
-	link_t  *link;
+	Link  *link;
 
 	if (! history) {
 		puts("(empty history)");
@@ -618,7 +699,8 @@ void view_history(int key)
 	}
 }
 
-void view_bookmarks(int key)
+static void
+view_bookmarks(int key)
 {
 	int     i;
 	char    a, b;
@@ -644,9 +726,10 @@ void view_bookmarks(int key)
 	}
 }
 
-void pop_history()
+static void
+pop_history(void)
 {
-	link_t  *next;
+	Link  *next;
 
 	if (! history) {
 		puts("(empty history)");
@@ -663,9 +746,10 @@ void pop_history()
 	history = next;
 }
 
-int follow_link(int key)
+static int
+follow_link(int key)
 {
-	link_t  *link;
+	Link  *link;
 
 	for (link = links; link; link = link->next) {
 		if (link->key != key)
@@ -707,9 +791,10 @@ int follow_link(int key)
 	return 0;
 }
 
-void download_link(int key)
+static void
+download_link(int key)
 {
-	link_t  *link;
+	Link  *link;
 
 	for (link = links; link; link = link->next) {
 		if (link->key != key)
@@ -720,7 +805,8 @@ void download_link(int key)
 	puts("link not found");
 }
 
-int parse_uri(const char *uri)
+static int
+parse_uri(const char *uri)
 {
 	int     i;
 
@@ -752,7 +838,8 @@ int parse_uri(const char *uri)
 	return 1;
 }
 
-int main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
 	int     i;
 	char    line[1024], *uri;
@@ -763,8 +850,9 @@ int main(int argc, char *argv[])
 
 	/* parse command line */
 	for (i = 1; i < argc; i++) {
-		if (argv[i][0] == '-') switch (argv[i][1]) {
-			case 'H':
+		if (argv[i][0] == '-') {
+			switch (argv[i][1]) {
+			case 'h':
 				usage();
 				break;
 			case 'v':
@@ -772,7 +860,8 @@ int main(int argc, char *argv[])
 				exit(EXIT_FAILURE);
 			default:
 				usage();
-			} else {
+			}
+		} else {
 			uri = argv[i];
 		}
 	}
@@ -840,5 +929,6 @@ int main(int argc, char *argv[])
 			break;
 		}
 	}
+
 	return EXIT_SUCCESS; /* never get's here but stops cc complaining */
 }

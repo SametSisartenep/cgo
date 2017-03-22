@@ -38,9 +38,9 @@ Parameters
 In case you omit all parameters cgo will show you the default
 gopherhole specified in the source file.
 
- * -H               show usage
+ * -h               show usage
  * -v               print version
- * gopher URI       opens the given gopher URI
+ * uri              opens the given gopher URI
 
 
 Usage
@@ -52,7 +52,7 @@ Usage
  the given selector. Every time you jump to another
  directory listing cgo generates a history entry (like every
  browser). To show other media cgo uses external programs
- to present it (e.g. less, display, mplayer, firefox).
+ to present it (e.g. less, sxiv, mpv, firefox).
  Following commands are understood by cgo:
 
   * ?           help

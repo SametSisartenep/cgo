@@ -1,6 +1,7 @@
 .\"
 .\"	cgo - a simple terminal based gopher client
 .\"	Copyright (c) 2013 Sebastian Steinhauer <s.steinhauer@yahoo.de>
+.\"	Copyright (c) 2017 Rodrigo González López <rodrigosloop@gmail.com>
 .\"
 .\"	Permission to use, copy, modify, and distribute this software for any
 .\"	purpose with or without fee is hereby granted, provided that the above
@@ -22,8 +23,8 @@
 .Nd simple terminal based gopher client
 .Sh SYNOPSIS
 .Nm cgo
-.Op Fl Hv
-.Op Ar gopher URI
+.Op Fl hv
+.Op Ar uri
 .Sh DESCRIPTION
 .Nm
 is a UNIX/Linux terminal based gopher client.
@@ -38,11 +39,11 @@ And c could stand for C (the programming language), colorful, or console.
 .Pp
 The options are as follows:
 .Bl -tag -width Ds
-.It Fl H
+.It Fl h
 Show usage.
 .It Fl v
 Print version.
-.It Ar gopher URI
+.It Ar uri
 Open given gopher URI.
 .El
 .Pp
@@ -58,7 +59,7 @@ Every time you jump to another directory listing
 generates a history entry (like every browser).
 To show other media
 .Nm
-uses external programs (e.g. less, display, mplayer, firefox).
+uses external programs (e.g. less, sxiv, mpv, firefox).
 .Pp
 The following commands are understood by
 .Nm :
