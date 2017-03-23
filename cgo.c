@@ -1,4 +1,4 @@
-/*	$Antares: cgo.c,v 0.5 2017/03/22 01:54 sam Exp $	*/
+/*	$Antares: cgo.c,v 0.6 2017/03/23 02:08 sam Exp $	*/
 
 /*
  * cgo - a simple terminal based gopher client
@@ -31,7 +31,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define VERSION 	"0.5"
+#include "strlcpy.h"
+
+#define VERSION 	"0.6"
 #define AUTHOR		"Sebastian Steinhauer and contributors"
 
 /* some "configuration" */
@@ -143,17 +145,17 @@ banner(FILE *f)
 static void
 parse_config_line(const char *line)
 {
-	char    token[1024];
-	char    bkey[128];
+	char     token[1024];
+	char     bkey[128];
 	char    *value = NULL;
-	int     i, j;
+	size_t   i, j;
 
 	while (*line == ' ' || *line == '\t') line++;
 	for (i = 0; *line && *line != ' ' && *line != '\t'; line++)
 		if (i < sizeof(token) - 1) token[i++] = *line;
 	token[i] = 0;
 
-	if (! strcmp(token, "start_uri")) value = &config.start_uri[0];
+	if (!strcmp(token, "start_uri")) value = &config.start_uri[0];
 	else if (! strcmp(token, "cmd_text")) value = &config.cmd_text[0];
 	else if (! strcmp(token, "cmd_browser")) value = &config.cmd_browser[0];
 	else if (! strcmp(token, "cmd_image")) value = &config.cmd_image[0];
@@ -163,13 +165,13 @@ parse_config_line(const char *line)
 	                  "color_selector")) value = &config.color_selector[0];
 	else {
 		for (j = 0; j < NUM_BOOKMARKS; j++) {
-			snprintf(bkey, sizeof(bkey), "bookmark%d", j + 1);
-			if (! strcmp(token, bkey)) {
+			snprintf(bkey, sizeof(bkey), "bookmark%lu", j + 1);
+			if (!strcmp(token, bkey)) {
 				value = &bookmarks[j][0];
 				break;
 			}
 		}
-		if (! value) return;
+		if (!value) return;
 	};
 
 	while (*line == ' ' || *line == '\t') line++;
@@ -184,11 +186,12 @@ static void
 load_config(const char *filename)
 {
 	FILE    *fp;
-	int     ch, i;
-	char    line[1024];
+	int      ch;
+	size_t   i;
+	char     line[1024];
 
 	fp = fopen(filename, "r");
-	if (! fp) return;
+	if (!fp) return;
 
 	memset(line, 0, sizeof(line));
 	i = 0;
@@ -224,9 +227,9 @@ load_config(const char *filename)
 static void
 init_config(void)
 {
-	char        filename[1024];
+	char         filename[1024];
 	const char  *home;
-	int         i;
+	int          i;
 
 	/* copy defaults */
 	snprintf(config.start_uri, sizeof(config.start_uri), START_URI);
@@ -252,10 +255,10 @@ init_config(void)
 static int
 dial(const char *host, const char *port, const char *selector)
 {
-	struct addrinfo hints;
-	struct addrinfo *res, *r;
-	int             srv = -1, s, l;
-	char            request[512];
+	struct addrinfo   hints;
+	struct addrinfo  *res, *r;
+	int               srv = -1, s, l;
+	char              request[512];
 
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_UNSPEC;
@@ -346,13 +349,9 @@ download_file(const char *host, const char *port,
 static int
 download_temp(const char *host, const char *port, const char *selector)
 {
-	int     tmpfd;
+	int tmpfd;
 
-#if defined(__OpenBSD__)
 	strlcpy(tmpfilename, "/tmp/cgoXXXXXX", sizeof(tmpfilename));
-#else
-	strcpy(tmpfilename, "/tmp/cgoXXXXXX");
-#endif
 	tmpfd = mkstemp(tmpfilename);
 	if (tmpfd == -1) {
 		fputs("error: unable to create tmp file\n", stderr);
@@ -368,7 +367,7 @@ download_temp(const char *host, const char *port, const char *selector)
 static int
 make_key(char c1, char c2)
 {
-	if (! c1 || ! c2)
+	if (!c1 || !c2)
 		return -1;
 	return ((c1 - 'a') * KEY_RANGE) + (c2 - 'a');
 }
@@ -385,9 +384,9 @@ add_link(char which, const char *name,
               const char *host, const char *port, const char *selector)
 {
 	Link  *link;
-	char    a = 0, b = 0;
+	char   a = 0, b = 0;
 
-	if (! host || ! port || ! selector)
+	if (!host || !port || !selector)
 		return; /* ignore incomplete selectors */
 	link = calloc(1, sizeof(Link));
 	link->which = which;
@@ -395,7 +394,7 @@ add_link(char which, const char *name,
 	link->host = strdup(host);
 	link->port = strdup(port);
 	link->selector = strdup(selector);
-	if (! links)
+	if (!links)
 		link->next = NULL;
 	else
 		link->next = links;
@@ -434,7 +433,7 @@ add_history(void)
 	link->selector = strdup(current_selector);
 	link->which = 0;    /* not needed for history...just clear them */
 	link->key = 0;
-	if (! history)
+	if (!history)
 		link->next = NULL;
 	else
 		link->next = history;
@@ -444,8 +443,8 @@ add_history(void)
 static void
 handle_directory_line(char *line)
 {
-	int     i;
-	char    *lp, *last, *fields[4];
+	int    i;
+	char  *lp, *last, *fields[4];
 
 	/* tokenize */
 	for (i = 0; i < 4; i++)
@@ -517,10 +516,10 @@ static void
 view_directory(const char *host, const char *port,
                     const char *selector, int make_current)
 {
-	int     is_dir;
-	int     srvfd, i, head_read;
-	char    line[1024];
-	char    head[HEAD_CHECK_LEN][1024];
+	int   is_dir;
+	int   srvfd, i, head_read;
+	char  line[1024];
+	char  head[HEAD_CHECK_LEN][1024];
 
 	srvfd = dial(host, port, selector);
 	if (srvfd != -1) {  /* only adapt current prompt when successful */
@@ -569,12 +568,13 @@ view_file(const char *cmd, const char *host,
                const char *port, const char *selector)
 {
 	pid_t   pid;
-	int     status, i, j;
+	int     status;
+	size_t  i, j;
 	char    buffer[1024], *argv[32], *p;
 
 	printf("h(%s) p(%s) s(%s)\n", host, port, selector);
 
-	if (! download_temp(host, port, selector))
+	if (!download_temp(host, port, selector))
 		return;
 
 	/* parsed command line string */
@@ -629,23 +629,20 @@ view_download(const char *host, const char *port,
 	snprintf(filename, sizeof(filename), "%s", strrchr(selector, '/') + 1);
 	printf("enter filename for download [%s]: ", filename);
 	fflush(stdout);
-	if (! read_line(0, line, sizeof(line))) {
+	if (!read_line(0, line, sizeof(line))) {
 		puts("download aborted");
 		return;
 	}
 	if (strlen(line) > 0)
-#if defined(__OpenBSD__)
 		strlcpy(filename, line, sizeof(filename));
-#else
-		strcpy(filename, line);
-#endif
+
 	fd = open(filename, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
 	if (fd == -1) {
 		printf("error: unable to create file [%s]: %s\n",
 		       filename, strerror(errno));
 		return;
 	}
-	if (! download_file(host, port, selector, fd)) {
+	if (!download_file(host, port, selector, fd)) {
 		printf("error: unable to download [%s]\n", selector);
 		unlink(filename);
 		return;
@@ -660,7 +657,7 @@ view_search(const char *host, const char *port, const char *selector)
 
 	printf("enter search string: ");
 	fflush(stdout);
-	if (! read_line(0, line, sizeof(line))) {
+	if (!read_line(0, line, sizeof(line))) {
 		puts("search aborted");
 		return;
 	}
@@ -672,25 +669,25 @@ view_search(const char *host, const char *port, const char *selector)
 static void
 view_history(int key)
 {
-	int     history_key = 0;
-	char    a, b;
+	int    history_key = 0;
+	char   a, b;
 	Link  *link;
 
-	if (! history) {
+	if (!history) {
 		puts("(empty history)");
 		return;
 	}
-	if ( key < 0 ) {
+	if (key < 0) {
 		puts("(history)");
-		for ( link = history; link; link = link->next ) {
+		for (link = history; link; link = link->next) {
 			make_key_str(history_key++, &a, &b);
 			printf("\033[%sm%c%c\033[0m \033[1m%s:%s%s\033[0m\n",
 			       COLOR_SELECTOR, a, b, link->host, link->port, link->selector);
 		}
 	} else {
 		/* traverse history list */
-		for ( link = history; link; link = link->next, ++history_key ) {
-			if ( history_key == key ) {
+		for (link = history; link; link = link->next, ++history_key) {
+			if (history_key == key) {
 				view_directory(link->host, link->port, link->selector, 0);
 				return;
 			}
@@ -731,7 +728,7 @@ pop_history(void)
 {
 	Link  *next;
 
-	if (! history) {
+	if (!history) {
 		puts("(empty history)");
 		return;
 	}
@@ -808,10 +805,10 @@ download_link(int key)
 static int
 parse_uri(const char *uri)
 {
-	int     i;
+	size_t i;
 
 	/* strip gopher:// */
-	if (! strncmp(uri, "gopher://", 9))
+	if (!strncmp(uri, "gopher://", 9))
 		uri += 9;
 	/* parse host */
 	for (i = 0; *uri && *uri != ':' && *uri != '/'; uri++) {
@@ -868,7 +865,7 @@ main(int argc, char *argv[])
 
 	/* parse uri */
 	banner(stdout);
-	if (! parse_uri(uri)) {
+	if (!parse_uri(uri)) {
 		banner(stderr);
 		fprintf(stderr, "invalid gopher URI: %s", argv[i]);
 		exit(EXIT_FAILURE);
@@ -880,7 +877,7 @@ main(int argc, char *argv[])
 		printf("\033[%sm%s:%s%s\033[0m ", config.color_prompt,
 		       current_host, current_port, current_selector);
 		fflush(stdout); /* to display the prompt */
-		if (! read_line(0, line, sizeof(line))) {
+		if (!read_line(0, line, sizeof(line))) {
 			puts("QUIT");
 			return EXIT_SUCCESS;
 		}

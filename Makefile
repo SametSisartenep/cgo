@@ -12,7 +12,7 @@ CFLAGS = -Wall -Wextra -Wformat-security -Wpointer-arith \
 
 CC ?= cc
 
-SRC = cgo.c
+SRC = cgo.c strlcpy.c
 BIN = cgo
 MAN = cgo.1
 
